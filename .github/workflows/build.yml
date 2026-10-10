@@ -30,6 +30,7 @@ jobs:
         with:
           # We need the full history & tags for git describe
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Fetch submodules
         run: |
@@ -49,6 +50,8 @@ jobs:
       - name: Setup build environment
         run: |
           "${CROSS_TC}-gcc" --version
+          # Fail early if the tags are missing (e.g., in a fork that didn't sync them)
+          git describe
           # Mimic koxtoolchain's "x-compile.sh kobo env bare"
           ARCH_FLAGS="-march=armv7-a -mtune=cortex-a8 -mfpu=neon -mfloat-abi=hard -mthumb"
           {
@@ -94,7 +97,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
