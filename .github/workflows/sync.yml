@@ -1,0 +1,53 @@
+name: Sync with upstream
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/NiLuJe/kfmon.git
+
+jobs:
+  sync:
+    # Only makes sense in a fork
+    if: github.repository != 'NiLuJe/kfmon'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git remote add upstream "${UPSTREAM}"
+          git fetch --tags upstream master
+          # We also need upstream's tags for git describe
+          git push origin --tags
+          if git merge-base --is-ancestor upstream/master HEAD; then
+            echo "Already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git merge --no-edit upstream/master
+          git push origin HEAD
+          echo "updated=true" >> "${GITHUB_OUTPUT}"
+
+      # NOTE: Pushes made with the GITHUB_TOKEN don't trigger workflows, so we have to do it ourselves.
+      - name: Trigger build
+        if: steps.merge.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run build.yml --ref "${GITHUB_REF_NAME}"
