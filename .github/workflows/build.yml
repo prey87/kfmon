@@ -1,0 +1,117 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Prebuilt cross-toolchains from https://github.com/koreader/koxtoolchain/releases
+  KOXTOOLCHAIN_VERSION: '2026.08'
+  KOXTOOLCHAIN_SHA256: 326dd2a2a5ca371073c4ebc783d578f93f4122d83c46b84ec85b9e3ed5ff2305
+  # NOTE: Both packages are built with the "kobo" TC (glibc 2.15), like upstream's own builds:
+  #       the kobov5 target only differs in how things are packaged (update.tar vs. KoboRoot.tgz).
+  CROSS_TC: arm-kobo-linux-gnueabihf
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # We need the full history & tags for git describe
+          fetch-depth: 0
+
+      - name: Fetch submodules
+        run: |
+          # FBInk also relies on git describe, the rest can be shallow
+          git submodule update --init FBInk
+          git -C FBInk submodule update --init --recursive --depth 1
+          git submodule update --init --depth 1 inih sqlite
+
+      - name: Install cross-toolchain
+        run: |
+          curl -fsSL -o /tmp/kobo.tar.zst "https://github.com/koreader/koxtoolchain/releases/download/${KOXTOOLCHAIN_VERSION}/kobo.tar.zst"
+          echo "${KOXTOOLCHAIN_SHA256}  /tmp/kobo.tar.zst" | sha256sum -c -
+          tar -C "${HOME}" -xf /tmp/kobo.tar.zst
+          rm -f /tmp/kobo.tar.zst
+          echo "${HOME}/x-tools/${CROSS_TC}/bin" >> "${GITHUB_PATH}"
+
+      - name: Setup build environment
+        run: |
+          "${CROSS_TC}-gcc" --version
+          # Mimic koxtoolchain's "x-compile.sh kobo env bare"
+          ARCH_FLAGS="-march=armv7-a -mtune=cortex-a8 -mfpu=neon -mfloat-abi=hard -mthumb"
+          {
+            echo "CFLAGS=-O3 -ffast-math ${ARCH_FLAGS} -pipe -fomit-frame-pointer -frename-registers -fweb -flto=$(nproc) -fuse-linker-plugin"
+            echo "LDFLAGS=-Wl,-O1 -Wl,--as-needed"
+            echo "AR=${CROSS_TC}-gcc-ar"
+            echo "RANLIB=${CROSS_TC}-gcc-ranlib"
+            echo "NM=${CROSS_TC}-gcc-nm"
+            echo "KFMON_VERSION=$(git describe)"
+          } >> "${GITHUB_ENV}"
+
+      - name: Build Kobo package (KoboRoot.tgz, FW 4.x)
+        run: make kobo
+
+      - name: Build Kobo v5 package (update.tar, FW 5.x)
+        run: make kobov5
+
+      - name: Collect packages
+        run: |
+          file Release/kfmon Release/kfmon-ipc Release/shim FBInk/Release/fbink
+          mkdir dist
+          cp "Kobo/KFMon-${KFMON_VERSION}.zip" "dist/KFMon-${KFMON_VERSION}-kobo.zip"
+          cp Kobo/KFMon-Uninstaller.zip dist/KFMon-Uninstaller-kobo.zip
+          cp "KoboV5/KFMon-${KFMON_VERSION}.zip" "dist/KFMon-${KFMON_VERSION}-kobov5.zip"
+          cp KoboV5/KFMon-Uninstaller.zip dist/KFMon-Uninstaller-kobov5.zip
+          for pkg in dist/*.zip; do unzip -l "${pkg}"; done
+          cd dist && sha256sum -- *.zip | tee SHA256SUMS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: KFMon-${{ env.KFMON_VERSION }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    # Tags get a proper release, master a rolling "nightly" pre-release
+    if: github.event_name == 'push' && (github.ref_type == 'tag' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes dist/*
+
+      - name: Publish nightly
+        if: github.ref_type != 'tag'
+        run: |
+          version="$(basename dist/KFMon-v*-kobov5.zip -kobov5.zip)"
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly --prerelease --target "${GITHUB_SHA}" \
+            --title "${version} (nightly)" \
+            --notes "Automated build of \`${GITHUB_SHA}\`.
+
+          - \`${version}-kobo.zip\`: FW 4.x and older (\`KoboRoot.tgz\`)
+          - \`${version}-kobov5.zip\`: FW 5.x, i.e., Kobo Mk. 8+ and Tolino (\`update.tar\`)" \
+            dist/*
