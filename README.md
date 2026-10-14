@@ -1,3 +1,17 @@
+## About This Fork
+
+This is an unofficial fork of [KFMon](https://github.com/NiLuJe/kfmon), maintained solely to provide automated builds through GitHub Actions.
+
+The original project is developed and maintained by [NiLuJe](https://github.com/NiLuJe).
+
+This fork does not aim to replace or independently maintain the original project. Changes are primarily limited to build automation.
+
+All credit for KFMon goes to its original author and contributors.
+
+**Disclaimer:** Builds provided here are unofficial and are not maintained or endorsed by the original author.
+
+---
+
 # KFMon
 [![License](https://img.shields.io/github/license/NiLuJe/kfmon.svg)](/LICENSE) (https://www.codacy.com/app/NiLuJe/kfmon?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=NiLuJe/kfmon&amp;utm_campaign=Badge_Grade) [![Latest tag](https://img.shields.io/github/tag-date/NiLuJe/kfmon.svg)](https://github.com/NiLuJe/kfmon/releases/)
 
